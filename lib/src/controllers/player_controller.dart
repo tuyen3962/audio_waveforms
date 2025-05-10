@@ -170,7 +170,8 @@ class PlayerController extends ChangeNotifier {
     bool forceRefresh = true,
   }) async {
     if (_playerState == PlayerState.initialized ||
-        _playerState == PlayerState.paused) {
+        _playerState == PlayerState.paused ||
+        _playerState == PlayerState.stopped) {
       final isStarted =
           await AudioWaveformsInterface.instance.startPlayer(playerKey);
       if (isStarted) {
