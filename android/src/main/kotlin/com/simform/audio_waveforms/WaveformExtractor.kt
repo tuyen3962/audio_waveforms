@@ -35,6 +35,7 @@ class WaveformExtractor(
     private var pcmEncodingBit = 16
     private var totalSamples = 0L
     private var perSamplePoints = 0L
+    private var isReplySubmitted = false
 
     private fun getFormat(path: String): MediaFormat? {
         val mediaExtractor = MediaExtractor()
@@ -62,13 +63,23 @@ class WaveformExtractor(
                 it.configure(format, null, null, 0)
                 it.setCallback(object : MediaCodec.Callback() {
                     override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
-                        if (inputEof) return
+                        if (inputEof || index < 0) return
                         val extractor = extractor ?: return
                         codec.getInputBuffer(index)?.let { buf ->
                             val size = extractor.readSampleData(buf, 0)
-                            if (size > 0) {
-                                codec.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
-                                extractor.advance()
+                            val sampleTime = extractor.sampleTime
+                            if (size > 0 && sampleTime >= 0) {
+                                try {
+                                    codec.queueInputBuffer(index, 0, size, sampleTime, 0)
+                                    extractor.advance()
+                                } catch (e: Exception) {
+                                    inputEof = true
+                                    result.error(
+                                        Constants.LOG_TAG,
+                                        e.message,
+                                        "Invalid input buffer."
+                                    )
+                                }
                             } else {
                                 codec.queueInputBuffer(
                                     index,
@@ -104,12 +115,15 @@ class WaveformExtractor(
                     }
 
                     override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-                        result.error(
-                            Constants.LOG_TAG,
-                            e.message,
-                            "An error is thrown while decoding the audio file"
-                        )
-                        finishCount.countDown()
+                        if (!isReplySubmitted) {
+                            result.error(
+                                Constants.LOG_TAG,
+                                e.message,
+                                "An error is thrown while decoding the audio file"
+                            )
+                            isReplySubmitted = true
+                            finishCount.countDown()
+                        }
                     }
 
                     override fun onOutputBufferAvailable(
@@ -137,6 +151,9 @@ class WaveformExtractor(
                         }
 
                         if (info.isEof()) {
+                            updateProgress()
+                            val rms = sqrt(sampleSum / perSamplePoints).toFloat()
+                            sendProgress(rms)
                             stop()
                         }
                     }
@@ -146,11 +163,14 @@ class WaveformExtractor(
             }
 
         } catch (e: Exception) {
-            result.error(
-                Constants.LOG_TAG,
-                e.message,
-                "An error is thrown before decoding the audio file"
-            )
+            if (!isReplySubmitted) {
+                result.error(
+                    Constants.LOG_TAG,
+                    e.message,
+                    "An error is thrown before decoding the audio file"
+                )
+                isReplySubmitted = true
+            }
         }
 
 
@@ -160,31 +180,17 @@ class WaveformExtractor(
     private var sampleCount = 0L
     private var sampleSum = 0.0
 
-    private fun rms(value: Float) {
+    private fun handleBufferDivision(value: Float) {
         if (sampleCount == perSamplePoints) {
-            currentProgress++
-            progress = currentProgress / expectedPoints
+            updateProgress()
 
             // Discard redundant values and release resources
             if (progress > 1.0F) {
                 stop()
                 return
             }
-
-            val rms = sqrt(sampleSum / perSamplePoints)
-            sampleData.add(rms.toFloat())
-            extractorCallBack.onProgress(progress)
-            sampleCount = 0
-            sampleSum = 0.0
-
-            val args: MutableMap<String, Any?> = HashMap()
-            args[Constants.waveformData] = sampleData
-            args[Constants.progress] = progress
-            args[Constants.playerKey] = key
-            methodChannel.invokeMethod(
-                Constants.onCurrentExtractedWaveformData,
-                args
-            )
+            val rms = sqrt(sampleSum / perSamplePoints).toFloat()
+            sendProgress(rms)
         }
 
         sampleCount++
@@ -193,11 +199,11 @@ class WaveformExtractor(
 
     private fun handle8bit(size: Int, buf: ByteBuffer) {
         repeat(size / if (channels == 2) 2 else 1) {
-            val result = buf.get().toInt() / 128f
+            val result = buf.get().toInt() / Constants.EIGHT_BITS
             if (channels == 2) {
                 buf.get()
             }
-            rms(result)
+            handleBufferDivision(result)
         }
     }
 
@@ -205,12 +211,12 @@ class WaveformExtractor(
         repeat(size / if (channels == 2) 4 else 2) {
             val first = buf.get().toInt()
             val second = buf.get().toInt() shl 8
-            val value = (first or second) / 32767f
+            val value = (first or second) / Constants.SIXTEEN_BITS
             if (channels == 2) {
                 buf.get()
                 buf.get()
             }
-            rms(value)
+            handleBufferDivision(value)
         }
     }
 
@@ -220,15 +226,36 @@ class WaveformExtractor(
             val second = buf.get().toLong() shl 8
             val third = buf.get().toLong() shl 16
             val forth = buf.get().toLong() shl 24
-            val value = (first or second or third or forth) / 2147483648f
+            val value = (first or second or third or forth) / Constants.THIRTY_TWO_BITS
             if (channels == 2) {
                 buf.get()
                 buf.get()
                 buf.get()
                 buf.get()
             }
-            rms(value)
+            handleBufferDivision(value)
         }
+    }
+
+    private fun updateProgress() {
+        currentProgress++
+        progress = currentProgress / expectedPoints
+    }
+
+    private fun sendProgress(rms: Float) {
+        sampleData.add(rms)
+        extractorCallBack.onProgress(progress)
+        sampleCount = 0
+        sampleSum = 0.0
+
+        val args: MutableMap<String, Any?> = HashMap()
+        args[Constants.waveformData] = sampleData
+        args[Constants.progress] = progress
+        args[Constants.playerKey] = key
+        methodChannel.invokeMethod(
+            Constants.onCurrentExtractedWaveformData,
+            args
+        )
     }
 
     fun stop() {
