@@ -199,7 +199,10 @@ class WaveformExtractor(
                                         // Set both position and limit to ensure buffer is accessible
                                         buf.position(info.offset)
                                         buf.limit(info.offset + info.size)
-                                        
+                                        if (!buf.isDirect) {
+                                            Log.e(Constants.LOG_TAG, "Buffer is not direct")
+                                            return
+                                        }
                                         when (pcmEncodingBit) {
                                             8 -> {
                                                 handle8bit(size, buf)
