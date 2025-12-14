@@ -12,7 +12,6 @@ class AudioWaveformsInterface {
   Future<bool> record({
     required RecorderSettings recorderSetting,
     String? path,
-    bool useLegacyNormalization = false,
     bool overrideAudioSession = true,
   }) async {
     final isRecording = await _methodChannel.invokeMethod(
@@ -21,11 +20,8 @@ class AudioWaveformsInterface {
           ? recorderSetting.iosToJson(
               path: path,
               overrideAudioSession: overrideAudioSession,
-              useLegacyNormalization: useLegacyNormalization,
             )
-          : {
-              Constants.useLegacyNormalization: useLegacyNormalization,
-            },
+          : null,
     );
     return isRecording ?? false;
   }
@@ -203,39 +199,49 @@ class AudioWaveformsInterface {
 
   Future<void> setMethodCallHandler() async {
     _methodChannel.setMethodCallHandler((call) async {
+      final instance = PlatformStreams.instance;
       switch (call.method) {
         case Constants.onCurrentDuration:
-          var duration = call.arguments[Constants.current];
-          var key = call.arguments[Constants.playerKey];
+          final duration = call.arguments[Constants.current];
+          final key = call.arguments[Constants.playerKey];
           if (duration.runtimeType == int) {
-            var identifier = PlayerIdentifier<int>(key, duration);
-            PlatformStreams.instance.addCurrentDurationEvent(identifier);
+            final identifier = PlayerIdentifier<int>(key, duration);
+            instance.addCurrentDurationEvent(identifier);
           }
           break;
         case Constants.onDidFinishPlayingAudio:
-          var key = call.arguments[Constants.playerKey];
-          var playerState =
+          final key = call.arguments[Constants.playerKey];
+          final playerState =
               getPlayerState(call.arguments[Constants.finishType]);
-          var stateIdentifier = PlayerIdentifier<PlayerState>(key, playerState);
-          var completionIdentifier = PlayerIdentifier<void>(key, null);
-          PlatformStreams.instance.addCompletionEvent(completionIdentifier);
-          PlatformStreams.instance.addPlayerStateEvent(stateIdentifier);
-          if (PlatformStreams.instance.playerControllerFactory[key] != null) {
-            PlatformStreams.instance.playerControllerFactory[key]
-                ?._playerState = playerState;
-          }
+          final stateIdentifier =
+              PlayerIdentifier<PlayerState>(key, playerState);
+          final completionIdentifier = PlayerIdentifier<void>(key, null);
+          instance
+            ..addCompletionEvent(completionIdentifier)
+            ..addPlayerStateEvent(stateIdentifier)
+            ..playerControllerFactory[key]?._playerState = playerState;
           break;
         case Constants.onCurrentExtractedWaveformData:
           var key = call.arguments[Constants.playerKey];
           var progress = call.arguments[Constants.progress];
           var waveformData =
               List<double>.from(call.arguments[Constants.waveformData]);
-          PlatformStreams.instance.addExtractedWaveformDataEvent(
+          instance.addExtractedWaveformDataEvent(
             PlayerIdentifier<List<double>>(key, waveformData),
           );
-          PlatformStreams.instance.addExtractionProgress(
+          instance.addExtractionProgress(
             PlayerIdentifier<double>(key, progress),
           );
+          break;
+        case Constants.onAudioChunk:
+          final normalisedRms = call.arguments[Constants.normalisedRms];
+          final bytes = call.arguments[Constants.bytes];
+          if (normalisedRms is double) {
+            instance.addAmplitudeEvent(normalisedRms);
+          }
+          if (bytes is Uint8List) {
+            instance.addRecordedBytes(bytes);
+          }
           break;
       }
     });
