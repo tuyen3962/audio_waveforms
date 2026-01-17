@@ -171,6 +171,25 @@ This plugin requires iOS 13.0 or higher. Add this line to your `Podfile`:
 platform :ios, '13.0'
 ```
 
+### macOS Setup
+
+#### Add microphone usage description
+
+Add description to your microphone usage in `macos/Runner/Info.plist`:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>This app requires microphone access to record audio.</string>
+```
+
+#### Set minimum macOS version
+
+This plugin requires macOS 10.14 or higher. Add this line to your `macos/Podfile`:
+
+```ruby
+platform :osx, '10.14'
+```
+
 ## 4. Import the package
 
 Add the import statement in your Dart files where you want to use Audio Waveforms:
@@ -404,7 +423,6 @@ final playerController = PlayerController();
 ## Prepare Player
 
 Before playing, prepare the player with an audio file:
-
 ```dart
 await playerController.preparePlayer(
   path: '/path/to/audio.mp3',
@@ -413,6 +431,30 @@ await playerController.preparePlayer(
 ```
 
 Setting `shouldExtractWaveform` to `true` will automatically extract waveform data from the audio file.
+
+### Configuring Waveform Sample Count
+
+You can control waveform granularity using either:
+
+**Fixed sample count:**
+```dart
+await playerController.preparePlayer(
+  path: '/path/to/audio.mp3',
+  shouldExtractWaveform: true,
+  noOfSamples: 200, // Exactly 200 waveform bars
+);
+```
+
+**Samples per second (dynamic):**
+```dart
+await playerController.preparePlayer(
+  path: '/path/to/audio.mp3',
+  shouldExtractWaveform: true,
+  noOfSamplesPerSecond: 10, // 10 samples per second of audio
+);
+```
+
+**Important**: Use only ONE of `noOfSamples` OR `noOfSamplesPerSecond`. If both are null, defaults to 100 samples. See the [Waveform Extraction Controller](#waveform-extraction-controller) section for detailed explanation of both approaches.
 
 ### Loading from Assets
 
@@ -862,6 +904,35 @@ AudioWaveforms(
 )
 ```
 
+## Waveform Render Mode
+
+The **WaveformRenderMode** enum controls the direction in which recording waveforms are rendered.
+
+Available Modes
+
+- LTR (Left-to-Right): Normal mode where waveforms render from left to right:
+```dart
+AudioWaveforms(
+  recorderController: recorderController,
+  size: Size(300, 80),
+  waveStyle: WaveStyle(
+    waveformRenderMode: WaveformRenderMode.ltr,
+  ),
+)
+```
+The waveform renders from left to right. Once the waveform reaches the end of the available width, older waves are pushed left to make space for new waves.
+
+- RTL (Right-to-Left): RTL mode where waveforms render from right to left:
+```dart
+AudioWaveforms(
+  recorderController: recorderController,
+  size: Size(300, 80),
+  waveStyle: WaveStyle(
+    waveformRenderMode: WaveformRenderMode.rtl,
+  ),
+)
+```
+
 # Advanced Usage - Player
 
 This guide covers advanced features and customizations of the audio player.
@@ -1227,21 +1298,50 @@ final waveformExtraction = WaveformExtractionController();
 
 ## Extract Waveform Data
 
-Extract waveform data from an audio file:
+Extract waveform data from an audio file using one of two sampling strategies:
+
+### Option 1: Fixed Sample Count
+
+Specify an exact number of waveform samples:
 
 ```dart
 final waveformData = await waveformExtraction.extractWaveformData(
   path: '/path/to/audio.mp3',
-  noOfSamples: 100,
+  noOfSamples: 200, // Exactly 200 data points
 );
-
-print('Extracted ${waveformData.length} samples');
 ```
+
+### Option 2: Samples Per Second (Dynamic)
+
+Automatically calculate samples based on audio duration:
+
+```dart
+final waveformData = await waveformExtraction.extractWaveformData(
+  path: '/path/to/audio.mp3',
+  noOfSamplesPerSecond: 10, // 10 samples per second of audio
+);
+```
+
+**How it works**: The total number of samples is calculated as `noOfSamplesPerSecond × audioDurationInSeconds`.
+
+For example:
+- A 30-second audio with `noOfSamplesPerSecond: 10` → 300 samples
+- A 2-minute audio with `noOfSamplesPerSecond: 5` → 600 samples
+
+**When to use each approach**:
+- **Fixed count** (`noOfSamples`): When you want a specific number of bars regardless of audio length
+- **Per second** (`noOfSamplesPerSecond`): When you want consistent waveform density across different audio durations
 
 ### Parameters
 
 - `path` (required): Path to the audio file (local or network URL)
-- `noOfSamples` (optional): Number of samples to extract (default: 100)
+- `noOfSamples` (optional): Fixed number of samples to extract
+- `noOfSamplesPerSecond` (optional): Samples per second for dynamic calculation
+
+**Important**: 
+- Provide only ONE of `noOfSamples` OR `noOfSamplesPerSecond`, not both
+- If both are null, defaults to `noOfSamples = 100`
+- Both `PlayerController` and `WaveformExtractionController` support these parameters
 
 ## Using Extracted Data
 
@@ -1522,21 +1622,21 @@ This section provides a quick reference for the main classes and their propertie
 
 ### Methods
 
-| Method                                                                               | Description                              |
-|--------------------------------------------------------------------------------------|------------------------------------------|
-| `preparePlayer({required String path, bool shouldExtractWaveform, int noOfSamples})` | Prepare audio file for playback          |
-| `startPlayer({FinishMode finishMode})`                                               | Start playing audio                      |
-| `pausePlayer()`                                                                      | Pause playback                           |
-| `stopPlayer()`                                                                       | Stop playback                            |
-| `setVolume(double volume)`                                                           | Set volume (0.0 to 1.0)                  |
-| `setRate(double rate)`                                                               | Set playback speed                       |
-| `seekTo(int progress)`                                                               | Seek to position in milliseconds         |
-| `setFinishMode({required FinishMode finishMode})`                                    | Set behavior when audio finishes         |
-| `getDuration(DurationType durationType)`                                             | Get duration (max or current)            |
-| `release()`                                                                          | Release native player resources          |
-| `stopAllPlayers()`                                                                   | Stop all players                         |
-| `pauseAllPlayers()`                                                                  | Pause all players                        |
-| `dispose()`                                                                          | Dispose controller and release resources |
+| Method                                                                                                           | Description                              |
+|------------------------------------------------------------------------------------------------------------------|------------------------------------------|
+| `preparePlayer({required String path, bool shouldExtractWaveform, int? noOfSamples, int? noOfSamplesPerSecond})` | Prepare audio file for playback          |
+| `startPlayer({FinishMode finishMode})`                                                                           | Start playing audio                      |
+| `pausePlayer()`                                                                                                  | Pause playback                           |
+| `stopPlayer()`                                                                                                   | Stop playback                            |
+| `setVolume(double volume)`                                                                                       | Set volume (0.0 to 1.0)                  |
+| `setRate(double rate)`                                                                                           | Set playback speed                       |
+| `seekTo(int progress)`                                                                                           | Seek to position in milliseconds         |
+| `setFinishMode({required FinishMode finishMode})`                                                                | Set behavior when audio finishes         |
+| `getDuration(DurationType durationType)`                                                                         | Get duration (max or current)            |
+| `release()`                                                                                                      | Release native player resources          |
+| `stopAllPlayers()`                                                                                               | Stop all players                         |
+| `pauseAllPlayers()`                                                                                              | Pause all players                        |
+| `dispose()`                                                                                                      | Dispose controller and release resources |
 
 ### Properties
 
@@ -1572,10 +1672,10 @@ This section provides a quick reference for the main classes and their propertie
 
 ### Methods
 
-| Method                                                         | Description                           |
-|----------------------------------------------------------------|---------------------------------------|
-| `extractWaveformData({required String path, int noOfSamples})` | Extract waveform data from audio file |
-| `stopWaveformExtraction()`                                     | Stop ongoing extraction               |
+| Method                                                                                     | Description                           |
+|--------------------------------------------------------------------------------------------|---------------------------------------|
+| `extractWaveformData({required String path, int? noOfSamples, int? noOfSamplesPerSecond})` | Extract waveform data from audio file |
+| `stopWaveformExtraction()`                                                                 | Stop ongoing extraction               |
 
 ### Streams
 
@@ -1792,47 +1892,10 @@ These are the main contributors who have helped shape the Audio Waveforms packag
 
 ## Main Contributors
 
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/Ujas-Majithiya">
-        <img src="https://avatars.githubusercontent.com/u/56400956?s=100" width="100px;" alt=""/>
-        <br />
-        <sub><b>Ujas Majithiya</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/DevarshRanpara">
-        <img src="https://avatars.githubusercontent.com/u/26064415?s=100" width="100px;" alt=""/>
-        <br />
-        <sub><b>Devarsh Ranpara</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/jayakbari1">
-        <img src="https://avatars.githubusercontent.com/u/67188121?s=100" width="100px;" alt=""/>
-        <br />
-        <sub><b>Jay Akbari</b></sub>
-      </a>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/himanshu447">
-        <img src="https://avatars.githubusercontent.com/u/35589687?s=100" width="100px;" alt=""/>
-        <br />
-        <sub><b>Himanshu Gandhi</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/ManojPadia">
-        <img src="https://avatars.githubusercontent.com/u/69233459?s=100" width="100px;" alt=""/>
-        <br />
-        <sub><b>Manoj Padia</b></sub>
-      </a>
-    </td>
-  </tr>
-</table>
+
+| ![img](https://avatars.githubusercontent.com/u/56400956?v=4&s=200) | ![img](https://avatars.githubusercontent.com/u/67188121?v=4&s=200) | ![img](https://avatars.githubusercontent.com/u/55338705?v=4&s=200&t=1) | ![img](https://avatars.githubusercontent.com/u/130688960?v=4&s=200) |
+|:------------------------------------------------------------------:|:------------------------------------------------------------------:|:----------------------------------------------------------------------:|:-------------------------------------------------------------------:|
+|        [Ujas Majithiya](https://github.com/Ujas-Majithiya)         |            [Jay Akbari](https://github.com/jayakbari1)             |          [Priyanshu Desai](https://github.com/priyanshudesai)          |             [Vasu Nageshri](https://github.com/Vasusn)              |
 
 ## How to Contribute
 
